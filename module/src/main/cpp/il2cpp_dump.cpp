@@ -8,12 +8,12 @@
 #include <sstream>
 #include <fstream>
 #include <pthread.h>
-#include "il2cpp-tabledefs.h"
-#include IL2CPPCLASS
+#include <il2cpp-api.h>
+#include <il2cpp-class.h>
 
 #define DO_API(r, n, p) r (*n) p
 
-#include IL2CPPAPI
+#include <il2cpp-api-functions.h>
 
 #undef DO_API
 
@@ -21,9 +21,9 @@ static void *il2cpp_handle = nullptr;
 static uint64_t il2cpp_base = 0;
 
 void init_il2cpp_api() {
-#define DO_API(r, n, p) n = (r (*) p)GetProcAddress(il2cpp_handle, #n)
+#define DO_API(r, n, p) n = (r (*) p)dlsym(il2cpp_handle, #n)
 
-#include IL2CPPAPI
+#include <il2cpp-api-functions.h>
 
 #undef DO_API
 }
@@ -102,7 +102,7 @@ std::string get_method_modifier(uint16_t flags) {
     return outPut.str();
 }
 
-std::string dump_method(Il2CppClass * klass) {
+std::string dump_method(Il2CppClass *klass) {
     std::stringstream outPut;
     if (klass->method_count > 0) {
         outPut << "\n\t// Methods\n";
@@ -110,9 +110,9 @@ std::string dump_method(Il2CppClass * klass) {
         while (auto method = il2cpp_class_get_methods(klass, &iter)) {
             if (method->methodPointer) {
                 outPut << "\t// RVA: 0x";
-                outPut << std::hex << (uint64_t) method->methodPointer - il2cpp_base;
+                outPut << std::hex << (uint64_t)method->methodPointer - il2cpp_base;
                 outPut << " VA: 0x";
-                outPut << std::hex << (uint64_t) method->methodPointer;
+                outPut << std::hex << (uint64_t)method->methodPointer;
             } else {
                 outPut << "\t// RVA: 0x VA: 0x0";
             }
@@ -160,14 +160,14 @@ std::string dump_method(Il2CppClass * klass) {
     return outPut.str();
 }
 
-std::string dump_property(Il2CppClass * klass) {
+std::string dump_property(Il2CppClass *klass) {
     std::stringstream outPut;
     if (klass->property_count > 0) {
         outPut << "\n\t// Properties\n";
         void *iter = nullptr;
         while (auto prop = il2cpp_class_get_properties(klass, &iter)) {
             outPut << "\t";
-            Il2CppClass * prop_class = nullptr;
+            Il2CppClass *prop_class = nullptr;
             if (prop->get) {
                 outPut << get_method_modifier(prop->get->flags);
                 prop_class = il2cpp_class_from_type(prop->get->return_type);
@@ -194,7 +194,7 @@ std::string dump_property(Il2CppClass * klass) {
     return outPut.str();
 }
 
-std::string dump_field(Il2CppClass * klass) {
+std::string dump_field(Il2CppClass *klass) {
     std::stringstream outPut;
     if (klass->field_count > 0) {
         outPut << "\n\t// Fields\n";
@@ -319,16 +319,15 @@ std::string dump_type(const Il2CppType *type) {
 
 void *il2cpp_dump_thread(void *arg) {
     char *outDir = (char *)arg;
-    il2cpp_dump(il2cpp_handle, outDir);
+    il2cpp_dump(outDir);
     return nullptr;
 }
 
-void il2cpp_dump(void *handle, char *outDir) {
+void il2cpp_dump(const char *outDir) {
     //LOGI("UnityVersion: %s", STRINGIFY_MACRO(UnityVersion));
     //LOGI("VersionAbove2018dot3: on");
     //LOGI("VersionAbove2018dot3: off");
-    //LOGI("il2cpp_handle: %p", handle);
-    il2cpp_handle = handle;
+    //LOGI("il2cpp_handle: %p", il2cpp_handle);
     init_il2cpp_api();
     auto domain = il2cpp_domain_get();
     il2cpp_thread_attach(domain);
@@ -343,7 +342,7 @@ void il2cpp_dump(void *handle, char *outDir) {
         typeDefinitionsCount += image->typeCount;
     }
     //LOGI("typeDefinitionsCount: %i", typeDefinitionsCount);
-    il2cpp_base = (uint64_t)il2cpp_handle;
+    il2cpp_base = get_module_base("libil2cpp.so");
     //LOGI("il2cpp_base: %" PRIx64"", il2cpp_base);
     std::vector<std::string> outPuts;
 #ifdef VersionAbove2018dot3
@@ -378,7 +377,7 @@ void il2cpp_dump(void *handle, char *outDir) {
         return;
     }
 #ifdef VersionAbove2018dot3
-    typedef void *(*Assembly_Load_ftn)(Il2CppString * , void * );
+    typedef void *(*Assembly_Load_ftn)(Il2CppString *, void *);
 #else
     typedef void *(*Assembly_Load_ftn)(void *, Il2CppString *, void *);
 #endif
@@ -394,18 +393,18 @@ void il2cpp_dump(void *handle, char *outDir) {
         auto imageNameNoExt = imageName.substr(0, pos);
         auto assemblyFileName = il2cpp_string_new(imageNameNoExt.c_str());
 #ifdef VersionAbove2018dot3
-        auto reflectionAssembly = ((Assembly_Load_ftn) assemblyLoad->methodPointer)(
+        auto reflectionAssembly = ((Assembly_Load_ftn)assemblyLoad->methodPointer)(
                 assemblyFileName, nullptr);
 #else
-        auto reflectionAssembly = ((Assembly_Load_ftn) assemblyLoad->methodPointer)(nullptr,
-                                                                                    assemblyFileName,
-                                                                                    nullptr);
+        auto reflectionAssembly = ((Assembly_Load_ftn)assemblyLoad->methodPointer)(nullptr,
+                                                                                  assemblyFileName,
+                                                                                  nullptr);
 #endif
-        auto reflectionTypes = ((Assembly_GetTypes_ftn) assemblyGetTypes->methodPointer)(
+        auto reflectionTypes = ((Assembly_GetTypes_ftn)assemblyGetTypes->methodPointer)(
                 reflectionAssembly, nullptr);
         auto items = reflectionTypes->vector;
         for (int j = 0; j < reflectionTypes->max_length; ++j) {
-            auto klass = il2cpp_class_from_system_type((Il2CppReflectionType *) items[j]);
+            auto klass = il2cpp_class_from_system_type((Il2CppReflectionType *)items[j]);
             auto type = il2cpp_class_get_type(klass);
             //LOGD("type name : %s", il2cpp_type_get_name(type));
             auto outPut = imageStr.str() + dump_type(type);
@@ -427,7 +426,7 @@ void il2cpp_dump(void *handle, char *outDir) {
 
 extern "C" void DllMain(int reason, void *reserved, char *outDir) {
     if (reason == 1) { // DLL_PROCESS_ATTACH
-        il2cpp_handle = GetModuleHandle("libil2cpp.so");
+        il2cpp_handle = (void *)get_module_base("libil2cpp.so");
         if (il2cpp_handle) {
             pthread_t thread;
             pthread_create(&thread, nullptr, il2cpp_dump_thread, outDir);
