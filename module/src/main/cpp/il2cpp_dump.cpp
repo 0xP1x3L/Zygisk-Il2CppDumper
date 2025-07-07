@@ -1,7 +1,3 @@
-//
-// Created by Perfare on 2020/7/4.
-//
-
 #include "il2cpp_dump.h"
 #include <dlfcn.h>
 #include <cstdlib>
@@ -11,7 +7,7 @@
 #include <vector>
 #include <sstream>
 #include <fstream>
-#include "log.h"
+#include <pthread.h>
 #include "il2cpp-tabledefs.h"
 #include IL2CPPCLASS
 
@@ -25,7 +21,7 @@ static void *il2cpp_handle = nullptr;
 static uint64_t il2cpp_base = 0;
 
 void init_il2cpp_api() {
-#define DO_API(r, n, p) n = (r (*) p)dlsym(il2cpp_handle, #n)
+#define DO_API(r, n, p) n = (r (*) p)GetProcAddress(il2cpp_handle, #n)
 
 #include IL2CPPAPI
 
@@ -47,7 +43,7 @@ uint64_t get_module_base(const char *module_name) {
             sscanf(line, "%" PRIx64"-%" PRIx64" %s %*" PRIx64" %*x:%*x %*u %s\n", &start, &end,
                    flags, path);
 #if defined(__aarch64__)
-            if (strstr(flags, "x") == 0) //TODO
+            if (strstr(flags, "x") == 0)
                 continue;
 #endif
             if (strstr(path, module_name)) {
@@ -112,7 +108,6 @@ std::string dump_method(Il2CppClass * klass) {
         outPut << "\n\t// Methods\n";
         void *iter = nullptr;
         while (auto method = il2cpp_class_get_methods(klass, &iter)) {
-            //TODO attribute
             if (method->methodPointer) {
                 outPut << "\t// RVA: 0x";
                 outPut << std::hex << (uint64_t) method->methodPointer - il2cpp_base;
@@ -126,7 +121,6 @@ std::string dump_method(Il2CppClass * klass) {
             }
             outPut << "\n\t";
             outPut << get_method_modifier(method->flags);
-            //TODO genericContainerIndex
             auto return_type = method->return_type;
             if (return_type->byref) {
                 outPut << "ref ";
@@ -161,7 +155,6 @@ std::string dump_method(Il2CppClass * klass) {
                 outPut.seekp(-2, outPut.cur);
             }
             outPut << ") { }\n";
-            //TODO GenericInstMethod
         }
     }
     return outPut.str();
@@ -173,7 +166,6 @@ std::string dump_property(Il2CppClass * klass) {
         outPut << "\n\t// Properties\n";
         void *iter = nullptr;
         while (auto prop = il2cpp_class_get_properties(klass, &iter)) {
-            //TODO attribute
             outPut << "\t";
             Il2CppClass * prop_class = nullptr;
             if (prop->get) {
@@ -208,7 +200,6 @@ std::string dump_field(Il2CppClass * klass) {
         outPut << "\n\t// Fields\n";
         void *iter = nullptr;
         while (auto field = il2cpp_class_get_fields(klass, &iter)) {
-            //TODO attribute
             outPut << "\t";
             auto attrs = field->type->attrs;
             auto access = attrs & FIELD_ATTRIBUTE_FIELD_ACCESS_MASK;
@@ -256,7 +247,6 @@ std::string dump_type(const Il2CppType *type) {
     if (flags & TYPE_ATTRIBUTE_SERIALIZABLE) {
         outPut << "[Serializable]\n";
     }
-    //TODO attribute
 #ifdef VersionAbove2021dot1
     auto valuetype = type->valuetype;
 #else
@@ -299,7 +289,7 @@ std::string dump_type(const Il2CppType *type) {
     } else {
         outPut << "class ";
     }
-    outPut << klass->name; //TODO genericContainerIndex
+    outPut << klass->name;
     std::vector<std::string> extends;
     if (!valuetype && !klass->enumtype && klass->parent) {
         auto parent_type = il2cpp_class_get_type(klass->parent);
@@ -323,19 +313,21 @@ std::string dump_type(const Il2CppType *type) {
     outPut << dump_field(klass);
     outPut << dump_property(klass);
     outPut << dump_method(klass);
-    //TODO EventInfo
     outPut << "}\n";
     return outPut.str();
 }
 
+void *il2cpp_dump_thread(void *arg) {
+    char *outDir = (char *)arg;
+    il2cpp_dump(il2cpp_handle, outDir);
+    return nullptr;
+}
+
 void il2cpp_dump(void *handle, char *outDir) {
-    LOGI("UnityVersion: %s", STRINGIFY_MACRO(UnityVersion));
-#ifdef VersionAbove2018dot3
-    LOGI("VersionAbove2018dot3: on");
-#else
-    LOGI("VersionAbove2018dot3: off");
-#endif
-    LOGI("il2cpp_handle: %p", handle);
+    //LOGI("UnityVersion: %s", STRINGIFY_MACRO(UnityVersion));
+    //LOGI("VersionAbove2018dot3: on");
+    //LOGI("VersionAbove2018dot3: off");
+    //LOGI("il2cpp_handle: %p", handle);
     il2cpp_handle = handle;
     init_il2cpp_api();
     auto domain = il2cpp_domain_get();
@@ -350,12 +342,11 @@ void il2cpp_dump(void *handle, char *outDir) {
                     << image->typeCount << "\n";
         typeDefinitionsCount += image->typeCount;
     }
-    LOGI("typeDefinitionsCount: %i", typeDefinitionsCount);
-    il2cpp_base = get_module_base("libil2cpp.so");
-    LOGI("il2cpp_base: %" PRIx64"", il2cpp_base);
+    //LOGI("typeDefinitionsCount: %i", typeDefinitionsCount);
+    il2cpp_base = (uint64_t)il2cpp_handle;
+    //LOGI("il2cpp_base: %" PRIx64"", il2cpp_base);
     std::vector<std::string> outPuts;
 #ifdef VersionAbove2018dot3
-    //使用il2cpp_image_get_class
     for (int i = 0; i < size; ++i) {
         auto image = il2cpp_assembly_get_image(assemblies[i]);
         std::stringstream imageStr;
@@ -370,21 +361,20 @@ void il2cpp_dump(void *handle, char *outDir) {
         }
     }
 #else
-    //使用反射
     auto corlib = il2cpp_get_corlib();
     auto assemblyClass = il2cpp_class_from_name(corlib, "System.Reflection", "Assembly");
     auto assemblyLoad = il2cpp_class_get_method_from_name(assemblyClass, "Load", 1);
     auto assemblyGetTypes = il2cpp_class_get_method_from_name(assemblyClass, "GetTypes", 0);
     if (assemblyLoad && assemblyLoad->methodPointer) {
-        LOGI("Assembly::Load: %p", assemblyLoad->methodPointer);
+        //LOGI("Assembly::Load: %p", assemblyLoad->methodPointer);
     } else {
-        LOGI("miss Assembly::Load");
+        //LOGI("miss Assembly::Load");
         return;
     }
     if (assemblyGetTypes && assemblyGetTypes->methodPointer) {
-        LOGI("Assembly::GetTypes: %p", assemblyGetTypes->methodPointer);
+        //LOGI("Assembly::GetTypes: %p", assemblyGetTypes->methodPointer);
     } else {
-        LOGI("miss Assembly::GetTypes");
+        //LOGI("miss Assembly::GetTypes");
         return;
     }
 #ifdef VersionAbove2018dot3
@@ -393,7 +383,7 @@ void il2cpp_dump(void *handle, char *outDir) {
     typedef void *(*Assembly_Load_ftn)(void *, Il2CppString *, void *);
 #endif
     typedef Il2CppArray *(*Assembly_GetTypes_ftn)(void *, void *);
-    LOGI("dumping...");
+    //LOGI("dumping...");
     for (int i = 0; i < size; ++i) {
         auto image = il2cpp_assembly_get_image(assemblies[i]);
         std::stringstream imageStr;
@@ -423,7 +413,7 @@ void il2cpp_dump(void *handle, char *outDir) {
         }
     }
 #endif
-    LOGI("write dump file");
+    //LOGI("write dump file");
     auto outPath = std::string(outDir).append("/files/dump.cs");
     std::ofstream outStream(outPath);
     outStream << imageOutput.str();
@@ -432,5 +422,16 @@ void il2cpp_dump(void *handle, char *outDir) {
         outStream << outPuts[i];
     }
     outStream.close();
-    LOGI("dump done!");
+    //LOGI("dump done!");
+}
+
+extern "C" void DllMain(int reason, void *reserved, char *outDir) {
+    if (reason == 1) { // DLL_PROCESS_ATTACH
+        il2cpp_handle = GetModuleHandle("libil2cpp.so");
+        if (il2cpp_handle) {
+            pthread_t thread;
+            pthread_create(&thread, nullptr, il2cpp_dump_thread, outDir);
+            pthread_detach(thread);
+        }
+    }
 }
